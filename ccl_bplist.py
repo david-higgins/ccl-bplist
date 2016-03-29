@@ -26,7 +26,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
 import sys
-import os
+import uuid
 import struct
 import datetime
 
@@ -269,7 +269,7 @@ def load(f):
         raise BplistError("Bad file header")
 
     # Read trailer
-    f.seek(-32, os.SEEK_END)
+    f.seek(-32, 2)
     trailer = f.read(32)
     offset_int_size, collection_offset_size, object_count, top_level_object_index, offest_table_offset = struct.unpack(">6xbbQQQ", trailer)
 
@@ -294,6 +294,11 @@ def NSKeyedArchiver_common_objects_convertor(o):
     # Conversion: NSDictionary
     if is_nsmutabledictionary(o):
         return convert_NSMutableDictionary(o)
+    # Conversion: NSDictionary second serialisation
+    if is_nsmutabledictionary1(o):
+        return convert_NSDictionary_oddlyserialised(o)
+    if is_nsuuid(o):
+        return convert_uuid(o)
     # Conversion: NSArray
     elif is_nsarray(o):
         return convert_NSArray(o)
@@ -412,6 +417,7 @@ def convert_NSMutableDictionary(obj):
     
     if not is_nsmutabledictionary(obj):
         raise ValueError("obj does not have the correct structure for a NSDictionary/NSMutableDictionary serialised to a NSKeyedArchiver")
+
     keys = obj["NS.keys"]
     vals = obj["NS.objects"]
 
@@ -430,6 +436,73 @@ def convert_NSMutableDictionary(obj):
         result[k] = vals[i]
     
     return result
+
+# NSMutableDictionary convenience functions again
+def is_nsmutabledictionary1(obj):
+    if not isinstance(obj, dict):
+        return False
+    if "$class" not in obj.keys():
+        return False
+    if obj["$class"].get("$classname") not in ("NSMutableDictionary", "NSDictionary"):
+        return False
+    if "NS.key.0" not in obj.keys():
+        return False
+    if "NS.object.0" not in obj.keys():
+        return False
+
+    return True
+    
+def convert_NSDictionary_oddlyserialised(obj):
+    """Converts a NSKeyedArchiver serialised NSMutableDictionary into
+       a straight dictionary (rather than the load of key values it is stored as)"""
+
+    if not is_nsmutabledictionary1(obj):
+        raise ValueError("obj does not have the correct structure for a NSDictionary/NSMutableDictionary serialised to a NSKeyedArchiver")
+
+    k=0; keys = []; vals = [];
+    kk = lambda k: "NS.key.%s"%k
+    while kk(k) in obj.keys():
+       keys.append(obj[kk(k)])
+       kv = "NS.object.%s"%k
+       vals.append(None if kv not in obj.keys() else obj[kv])
+       k = k + 1
+
+    # sense check the keys and values:
+    if not isinstance(keys, list):
+        raise TypeError("The 'NS.keys' value is an unexpected type (expected list; actual: {0}".format(type(keys)))
+    if not isinstance(vals, list):
+        raise TypeError("The 'NS.objects' value is an unexpected type (expected list; actual: {0}".format(type(vals)))
+    if len(keys) != len(vals):
+        raise ValueError("The length of the 'NS.keys' list ({0}) is not equal to that of the 'NS.objects ({1})".format(len(keys), len(vals)))
+
+    result = {}
+    for i in xrange(0,len(keys)):
+        k=keys[i]
+        if k in result:
+            raise ValueError("The 'NS.keys' list contains duplicate entries")
+        result[k] = vals[i]
+    
+    return result
+
+# this one often used as key
+def is_nsuuid(obj):
+    if not isinstance(obj, dict):
+        return False
+    if "$class" not in obj.keys():
+        return False
+    if obj["$class"].get("$classname") not in ("NSUUID"):
+        return False
+    if "NS.uuidbytes" not in obj.keys():
+        return False
+
+    return True
+
+def convert_uuid(obj):
+    if not is_nsuuid(obj):
+        raise ValueError("obj is not a nsuuid")
+    return uuid.UUID(bytes=obj['NS.uuidbytes'])
+
+
 
 # NSArray convenience functions
 def is_nsarray(obj):
