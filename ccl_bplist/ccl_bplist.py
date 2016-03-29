@@ -25,6 +25,7 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 
+import collections
 import sys
 import uuid
 import struct
@@ -297,8 +298,12 @@ def NSKeyedArchiver_common_objects_convertor(o):
     # Conversion: NSDictionary second serialisation
     if is_nsmutabledictionary1(o):
         return convert_NSDictionary_oddlyserialised(o)
+    # nsuuid
     if is_nsuuid(o):
         return convert_uuid(o)
+    # nsurl
+    if is_nsurl(o):
+        return convert_nsurl(o)
     # Conversion: NSArray
     elif is_nsarray(o):
         return convert_NSArray(o)
@@ -431,6 +436,9 @@ def convert_NSMutableDictionary(obj):
 
     result = {}
     for i,k in enumerate(keys):
+        if not isinstance(k, collections.Hashable):
+            classused = "no class known" if (not isinstance(k,dict) or "$class" not in k) else k["$class"]
+            raise ValueError("The key: %s is not hashable...\n class:%s"%(k,classused))
         if k in result:
             raise ValueError("The 'NS.keys' list contains duplicate entries")
         result[k] = vals[i]
@@ -478,6 +486,9 @@ def convert_NSDictionary_oddlyserialised(obj):
     result = {}
     for i in xrange(0,len(keys)):
         k=keys[i]
+        if not isinstance(k, collections.Hashable):
+            classused = "no class known" if (not isinstance(k,dict) or "$class" not in k) else k["$class"]
+            raise ValueError("The key: %s is not hashable...\n class:%s"%(k,classused))
         if k in result:
             raise ValueError("The 'NS.keys' list contains duplicate entries")
         result[k] = vals[i]
@@ -503,6 +514,34 @@ def convert_uuid(obj):
     return uuid.UUID(bytes=obj['NS.uuidbytes'])
 
 
+# is_nsurl thing
+def is_nsurl(obj):
+    if not isinstance(obj, dict):
+        return False
+    if "$class" not in obj.keys():
+        return False
+    if obj["$class"].get("$classname") not in ("NSURL"):
+        return False
+    if "NS.base" not in obj.keys():
+        return False
+    if "NS.relative" not in obj.keys():
+        return False
+
+    return True
+
+class NSURL(object):
+    def __init__(self, base, relative):
+        self.base = base
+        self.relative = relative
+    def __hash__(self):
+        return hash(self.base+self.relative)
+    def __eq__(self, other):
+        return isinstance(other, NSURL) and self.base==other.base and self.relative==other.relative
+
+def convert_nsurl(obj):
+    if not is_nsurl(obj):
+        raise ValueError("obj is not a nsurl")
+    return NSURL(obj["NS.base"], obj["NS.relative"])
 
 # NSArray convenience functions
 def is_nsarray(obj):
